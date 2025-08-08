@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>360° JPG Viewer — GitHub Pages</title>
+  <style>
+    html,body { margin:0; height:100%; overflow:hidden; background:#000; }
+    #info {
+      position: absolute; z-index: 2; left: 12px; top: 12px;
+      color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue";
+      background: rgba(0,0,0,0.35); padding:6px 10px; border-radius:6px; font-size:13px;
+    }
+    #canvas { display:block; width:100vw; height:100vh; }
+    .btn {
+      background: rgba(255,255,255,0.06); color:#fff; border:1px solid rgba(255,255,255,0.08);
+      padding:6px 8px; border-radius:6px; margin-left:8px; cursor:pointer; font-size:13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    Drag to look around • Scroll to zoom • 
+    <button id="autorotate" class="btn">Auto-rotate: On</button>
+    <label style="margin-left:8px"><input id="invert" type="checkbox"> invert</label>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <!-- THREE.js (use an appropriate version or your own hosted copy) -->
+  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+
+  <script>
+  // --- CONFIG --- change pano.jpg to your file name
+  const PANO_SRC = 'pano.jpg'; // place your equirectangular JPG here
+
+  // Basic three.js panorama viewer (no external controls)
+  let scene, camera, renderer, sphere;
+  let isUserInteracting = false;
+  let onPointerDownPointerX = 0, onPointerDownPointerY = 0;
+  let lon = 0, lat = 0, phi = 0, theta = 0;
+  let targetLon = 0, targetLat = 0;
+  let distance = 1; // camera distance scale (for zoom)
+  let autoRotate = true;
+
+  const canvas = document.getElementById('canvas');
+
+  init();
+  animate();
+
+  function init(){
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias:true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
+    camera.position.set(0,0,0.1);
+
+    // Sphere geometry and inverted scale for interior mapping
+    const geometry = new THREE.SphereGeometry(500, 60, 40);
+
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('');
+
+    loader.load(PANO_SRC, function(texture){
+      texture.minFilter = THREE.LinearFilter;
+      const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+      sphere = new THREE.Mesh(geometry, material);
+      sphere.scale.x = -1; // invert the sphere to view from inside
+      scene.add(sphere);
+    }, undefined, function(err){
+      console.error('Error loading panorama:', err);
+      alert('Failed to load panorama. Make sure "pano.jpg" exists next to index.html');
+    });
+
+    // Events
+    document.addEventListener('pointerdown', onPointerDown, false);
+    document.addEventListener('pointermove', onPointerMove, false);
+    document.addEventListener('pointerup', onPointerUp, false);
+    document.addEventListener('wheel', onWheel, {passive:false});
+    window.addEventListener('resize', onWindowResize, false);
+
+    // Touch: pointer events cover touch too
+
+    // UI
+    document.getElementById('autorotate').addEventListener('click', function(){
+      autoRotate = !autoRotate;
+      this.textContent = 'Auto-rotate: ' + (autoRotate ? 'On' : 'Off');
+    });
+    document.getElementById('invert').addEventListener('change', (e)=>{
+      if(sphere) sphere.scale.x = e.target.checked ? 1 : -1;
+    });
+  }
+
+  function onWindowResize(){
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function onPointerDown(event){
+    isUserInteracting = true;
+    onPointerDownPointerX = event.clientX;
+    onPointerDownPointerY = event.clientY;
+    onPointerDownLon = targetLon;
+    onPointerDownLat = targetLat;
+  }
+
+  function onPointerMove(event){
+    if (isUserInteracting === true) {
+      const deltaX = (event.clientX - onPointerDownPointerX);
+      const deltaY = (event.clientY - onPointerDownPointerY);
+      targetLon = onPointerDownLon + deltaX * 0.1;
+      targetLat = onPointerDownLat + deltaY * 0.1;
+    }
+  }
+
+  function onPointerUp(){
+    isUserInteracting = false;
+  }
+
+  function onWheel(event){
+    event.preventDefault();
+    // simple pinch-in/out type zoom via fov change
+    camera.fov += event.deltaY * 0.02;
+    camera.fov = Math.max(30, Math.min(100, camera.fov));
+    camera.updateProjectionMatrix();
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+
+    if(autoRotate && !isUserInteracting) targetLon += 0.02; // slow auto-rotate
+
+    // smooth the motion
+    lon += (targetLon - lon) * 0.07;
+    lat += (targetLat - lat) * 0.07;
+
+    lat = Math.max(-85, Math.min(85, lat));
+    phi = THREE.MathUtils.degToRad(90 - lat);
+    theta = THREE.MathUtils.degToRad(lon);
+
+    const x = 500 * Math.sin(phi) * Math.cos(theta);
+    const y = 500 * Math.cos(phi);
+    const z = 500 * Math.sin(phi) * Math.sin(theta);
+
+    camera.lookAt(x, y, z);
+
+    renderer.render(scene, camera);
+  }
+  </script>
+</body>
+</html>
