@@ -1,155 +1,324 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>360° JPG Viewer — GitHub Pages</title>
-  <style>
-    html,body { margin:0; height:100%; overflow:hidden; background:#000; }
-    #info {
-      position: absolute; z-index: 2; left: 12px; top: 12px;
-      color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue";
-      background: rgba(0,0,0,0.35); padding:6px 10px; border-radius:6px; font-size:13px;
-    }
-    #canvas { display:block; width:100vw; height:100vh; }
-    .btn {
-      background: rgba(255,255,255,0.06); color:#fff; border:1px solid rgba(255,255,255,0.08);
-      padding:6px 8px; border-radius:6px; margin-left:8px; cursor:pointer; font-size:13px;
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Multi-image 360° Viewer</title>
+<style>
+  :root { --ui-bg: rgba(0,0,0,0.45); --ui-fg:#fff; --accent: #08f; }
+  html,body { height:100%; margin:0; background:#000; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue"; color:var(--ui-fg); }
+  #app { height:100vh; display:flex; flex-direction:column; }
+  #topbar {
+    display:flex; align-items:center; gap:10px; padding:10px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15));
+    z-index:3; position:relative;
+  }
+  #controls { display:flex; align-items:center; gap:10px; }
+  .btn {
+    background:var(--ui-bg); color:var(--ui-fg); border:1px solid rgba(255,255,255,0.06);
+    padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px;
+  }
+  #dropzone {
+    display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px;
+    border:1px dashed rgba(255,255,255,0.06); background:transparent; color:#ddd; cursor:pointer;
+  }
+  #viewer { flex:1; position:relative; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; }
+  #thumbs {
+    position: absolute; left:12px; bottom:12px; display:flex; gap:8px; z-index:4;
+    background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.05)); padding:8px; border-radius:10px;
+    max-width: calc(100% - 24px); overflow:auto;
+  }
+  .thumb {
+    width:86px; height:48px; object-fit:cover; border-radius:6px; border:2px solid transparent; cursor:pointer;
+  }
+  .thumb.selected { border-color:var(--accent); transform:scale(1.04); }
+  #info {
+    position:absolute; right:12px; top:12px; background:var(--ui-bg); padding:8px 10px; border-radius:8px; z-index:4;
+    font-size:13px;
+  }
+  input[type="file"] { display:none; }
+  #emptyHint { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#999; z-index:2; text-align:center; }
+  .small { font-size:12px; color:#ccc; }
+  @media (max-width:700px){
+    .thumb{ width:72px; height:42px; }
+    #topbar { padding:8px; gap:6px; }
+  }
+</style>
 </head>
 <body>
-  <div id="info">
-    Drag to look around • Scroll to zoom • 
-    <button id="autorotate" class="btn">Auto-rotate: On</button>
-    <label style="margin-left:8px"><input id="invert" type="checkbox"> invert</label>
+<div id="app">
+  <div id="topbar">
+    <div id="controls">
+      <label id="dropzone" for="fileInput" title="Click to pick images or drag & drop them here">
+        + Import images
+      </label>
+      <input id="fileInput" type="file" accept="image/*" multiple>
+      <button id="prevBtn" class="btn" title="Previous image">◀</button>
+      <button id="nextBtn" class="btn" title="Next image">▶</button>
+      <button id="autorotateBtn" class="btn">Auto-rotate: On</button>
+      <label class="btn" style="display:inline-flex;align-items:center;gap:8px;">
+        <input id="invertChk" type="checkbox"> Invert
+      </label>
+      <button id="clearBtn" class="btn" title="Remove all uploaded images">Clear</button>
+    </div>
+
+    <div style="margin-left:auto; font-size:13px;" class="small">Drag to look • Scroll to zoom • ←/→ keyboard</div>
   </div>
 
-  <canvas id="canvas"></canvas>
+  <div id="viewer">
+    <canvas id="canvas"></canvas>
+    <div id="emptyHint">No images loaded — import equirectangular JPG/PNG images (drag & drop or click “Import”).</div>
+    <div id="thumbs" aria-hidden="false"></div>
+    <div id="info" class="small">Images: <span id="count">0</span></div>
+  </div>
+</div>
 
-  <!-- THREE.js (use an appropriate version or your own hosted copy) -->
-  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<!-- three.js -->
+<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
 
-  <script>
-  // --- CONFIG --- change pano.jpg to your file name
-  const PANO_SRC = 'pano.jpg'; // place your equirectangular JPG here
+<script>
+/* Multi-image 360 viewer
+   - Drag/drop or pick files
+   - Shows thumbnails; click to activate
+   - Uses blob URLs; no upload to server
+*/
 
-  // Basic three.js panorama viewer (no external controls)
-  let scene, camera, renderer, sphere;
-  let isUserInteracting = false;
-  let onPointerDownPointerX = 0, onPointerDownPointerY = 0;
-  let lon = 0, lat = 0, phi = 0, theta = 0;
-  let targetLon = 0, targetLat = 0;
-  let distance = 1; // camera distance scale (for zoom)
-  let autoRotate = true;
+const canvas = document.getElementById('canvas');
+const fileInput = document.getElementById('fileInput');
+const dropzone = document.getElementById('dropzone');
+const thumbs = document.getElementById('thumbs');
+const emptyHint = document.getElementById('emptyHint');
+const countEl = document.getElementById('count');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const autorotateBtn = document.getElementById('autorotateBtn');
+const invertChk = document.getElementById('invertChk');
+const clearBtn = document.getElementById('clearBtn');
 
-  const canvas = document.getElementById('canvas');
+let images = []; // {name, url, elThumb}
+let activeIndex = -1;
+let autoRotate = true;
 
-  init();
-  animate();
+// --- three.js viewer setup ---
+let renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
 
-  function init(){
-    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias:true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
+let scene = new THREE.Scene();
+let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 2000);
+camera.position.set(0,0,0.1);
 
-    scene = new THREE.Scene();
+let sphere = null;
+const geometry = new THREE.SphereGeometry(500, 60, 40);
 
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1100);
-    camera.position.set(0,0,0.1);
+// Interaction params
+let isUserInteracting = false;
+let onDownX = 0, onDownY = 0, onDownLon = 0, onDownLat = 0;
+let lon = 0, lat = 0, phi = 0, theta = 0;
+let targetLon = 0, targetLat = 0;
 
-    // Sphere geometry and inverted scale for interior mapping
-    const geometry = new THREE.SphereGeometry(500, 60, 40);
+function loadTextureFromURL(url, name){
+  const loader = new THREE.TextureLoader();
+  loader.setCrossOrigin('');
+  loader.load(url, texture => {
+    texture.minFilter = THREE.LinearFilter;
+    const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+    if(sphere) scene.remove(sphere);
+    sphere = new THREE.Mesh(geometry, material);
+    sphere.scale.x = invertChk.checked ? 1 : -1;
+    scene.add(sphere);
+    emptyHint.style.display = 'none';
+  }, undefined, err => {
+    console.error('Failed to load image', err, name);
+    alert('Failed to load "'+name+'". File may not be a supported image.');
+  });
+}
 
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin('');
+// Hook resize
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+});
 
-    loader.load(PANO_SRC, function(texture){
-      texture.minFilter = THREE.LinearFilter;
-      const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-      sphere = new THREE.Mesh(geometry, material);
-      sphere.scale.x = -1; // invert the sphere to view from inside
-      scene.add(sphere);
-    }, undefined, function(err){
-      console.error('Error loading panorama:', err);
-      alert('Failed to load panorama. Make sure "pano.jpg" exists next to index.html');
-    });
-
-    // Events
-    document.addEventListener('pointerdown', onPointerDown, false);
-    document.addEventListener('pointermove', onPointerMove, false);
-    document.addEventListener('pointerup', onPointerUp, false);
-    document.addEventListener('wheel', onWheel, {passive:false});
-    window.addEventListener('resize', onWindowResize, false);
-
-    // Touch: pointer events cover touch too
-
-    // UI
-    document.getElementById('autorotate').addEventListener('click', function(){
-      autoRotate = !autoRotate;
-      this.textContent = 'Auto-rotate: ' + (autoRotate ? 'On' : 'Off');
-    });
-    document.getElementById('invert').addEventListener('change', (e)=>{
-      if(sphere) sphere.scale.x = e.target.checked ? 1 : -1;
-    });
+// Pointer events (works for mouse & touch)
+document.addEventListener('pointerdown', (e) => {
+  isUserInteracting = true;
+  onDownX = e.clientX;
+  onDownY = e.clientY;
+  onDownLon = targetLon;
+  onDownLat = targetLat;
+});
+document.addEventListener('pointermove', (e) => {
+  if(isUserInteracting){
+    const deltaX = (e.clientX - onDownX);
+    const deltaY = (e.clientY - onDownY);
+    targetLon = onDownLon + deltaX * 0.1;
+    targetLat = onDownLat + deltaY * 0.1;
   }
+});
+document.addEventListener('pointerup', () => { isUserInteracting = false; });
 
-  function onWindowResize(){
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+// Wheel zoom
+document.addEventListener('wheel', e => {
+  e.preventDefault();
+  camera.fov += e.deltaY * 0.02;
+  camera.fov = Math.max(30, Math.min(100, camera.fov));
+  camera.updateProjectionMatrix();
+}, { passive:false });
+
+// Keyboard for next/prev
+document.addEventListener('keydown', e => {
+  if(e.key === 'ArrowRight') activateIndex(activeIndex + 1);
+  if(e.key === 'ArrowLeft') activateIndex(activeIndex - 1);
+});
+
+// Animation loop
+function animate(){
+  requestAnimationFrame(animate);
+  if(autoRotate && !isUserInteracting) targetLon += 0.02;
+  lon += (targetLon - lon) * 0.07;
+  lat += (targetLat - lat) * 0.07;
+  lat = Math.max(-85, Math.min(85, lat));
+  phi = THREE.MathUtils.degToRad(90 - lat);
+  theta = THREE.MathUtils.degToRad(lon);
+  const x = 500 * Math.sin(phi) * Math.cos(theta);
+  const y = 500 * Math.cos(phi);
+  const z = 500 * Math.sin(phi) * Math.sin(theta);
+  camera.lookAt(x,y,z);
+  renderer.render(scene, camera);
+}
+animate();
+
+// --- UI / file handling ---
+function updateCount(){
+  countEl.textContent = images.length;
+  if(images.length === 0){
+    emptyHint.style.display = 'block';
+    if(sphere){ scene.remove(sphere); sphere = null; }
+    activeIndex = -1;
+  } else {
+    emptyHint.style.display = 'none';
+    if(activeIndex === -1) activateIndex(0);
   }
+}
 
-  function onPointerDown(event){
-    isUserInteracting = true;
-    onPointerDownPointerX = event.clientX;
-    onPointerDownPointerY = event.clientY;
-    onPointerDownLon = targetLon;
-    onPointerDownLat = targetLat;
-  }
+function createThumbnail(file, url, index){
+  const img = document.createElement('img');
+  img.src = url;
+  img.className = 'thumb';
+  img.title = file.name;
+  img.addEventListener('click', () => activateIndex(index));
+  // right-click to remove
+  img.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    removeIndex(index);
+  });
+  return img;
+}
 
-  function onPointerMove(event){
-    if (isUserInteracting === true) {
-      const deltaX = (event.clientX - onPointerDownPointerX);
-      const deltaY = (event.clientY - onPointerDownPointerY);
-      targetLon = onPointerDownLon + deltaX * 0.1;
-      targetLat = onPointerDownLat + deltaY * 0.1;
-    }
-  }
+function activateIndex(i){
+  if(images.length === 0) return;
+  if(i < 0) i = images.length - 1;
+  if(i >= images.length) i = 0;
+  activeIndex = i;
+  // set selected class
+  Array.from(thumbs.children).forEach((t, idx) => {
+    t.classList.toggle('selected', idx === i);
+  });
+  const imgInfo = images[i];
+  loadTextureFromURL(imgInfo.url, imgInfo.name);
+}
 
-  function onPointerUp(){
-    isUserInteracting = false;
-  }
+function removeIndex(i){
+  if(i < 0 || i >= images.length) return;
+  // revoke object URL
+  URL.revokeObjectURL(images[i].url);
+  images.splice(i,1);
+  // remove thumbnail node
+  thumbs.innerHTML = '';
+  images.forEach((it, idx) => {
+    const t = createThumbnail({name:it.name}, it.url, idx);
+    thumbs.appendChild(t);
+    it.elThumb = t;
+  });
+  // adjust activeIndex
+  if(images.length === 0) activeIndex = -1;
+  else if(i <= activeIndex) activeIndex = Math.max(0, activeIndex - 1);
+  updateCount();
+  if(activeIndex !== -1) activateIndex(activeIndex);
+}
 
-  function onWheel(event){
-    event.preventDefault();
-    // simple pinch-in/out type zoom via fov change
-    camera.fov += event.deltaY * 0.02;
-    camera.fov = Math.max(30, Math.min(100, camera.fov));
-    camera.updateProjectionMatrix();
-  }
+function clearAll(){
+  images.forEach(it => URL.revokeObjectURL(it.url));
+  images = [];
+  thumbs.innerHTML = '';
+  updateCount();
+}
 
-  function animate(){
-    requestAnimationFrame(animate);
+fileInput.addEventListener('change', e => {
+  handleFiles(Array.from(e.target.files));
+  fileInput.value = '';
+});
 
-    if(autoRotate && !isUserInteracting) targetLon += 0.02; // slow auto-rotate
+['dragenter','dragover','dragleave','drop'].forEach(evt => {
+  dropzone.addEventListener(evt, ev => { ev.preventDefault(); ev.stopPropagation(); });
+});
+dropzone.addEventListener('drop', ev => {
+  const dt = ev.dataTransfer;
+  if(!dt) return;
+  const items = Array.from(dt.files || []);
+  handleFiles(items);
+});
+dropzone.addEventListener('click', () => fileInput.click());
 
-    // smooth the motion
-    lon += (targetLon - lon) * 0.07;
-    lat += (targetLat - lat) * 0.07;
+function handleFiles(files){
+  // accept images only
+  const imgs = files.filter(f => f.type && f.type.startsWith('image/'));
+  if(imgs.length === 0) return;
+  const startIndex = images.length;
+  imgs.forEach((f, idx) => {
+    const url = URL.createObjectURL(f);
+    const item = { name: f.name, url: url };
+    images.push(item);
+  });
+  // create thumbs
+  thumbs.innerHTML = '';
+  images.forEach((it, idx) => {
+    const t = createThumbnail({name:it.name}, it.url, idx);
+    thumbs.appendChild(t);
+    it.elThumb = t;
+  });
+  updateCount();
+  // auto-activate first of newly added if nothing active yet
+  if(activeIndex === -1) activateIndex(startIndex);
+}
 
-    lat = Math.max(-85, Math.min(85, lat));
-    phi = THREE.MathUtils.degToRad(90 - lat);
-    theta = THREE.MathUtils.degToRad(lon);
+// Prev/Next / Auto-rotate / invert / clear
+prevBtn.addEventListener('click', () => activateIndex(activeIndex - 1));
+nextBtn.addEventListener('click', () => activateIndex(activeIndex + 1));
+autorotateBtn.addEventListener('click', () => {
+  autoRotate = !autoRotate;
+  autorotateBtn.textContent = 'Auto-rotate: ' + (autoRotate ? 'On' : 'Off');
+});
+invertChk.addEventListener('change', () => {
+  if(sphere) sphere.scale.x = invertChk.checked ? 1 : -1;
+});
+clearBtn.addEventListener('click', () => { clearAll(); });
 
-    const x = 500 * Math.sin(phi) * Math.cos(theta);
-    const y = 500 * Math.cos(phi);
-    const z = 500 * Math.sin(phi) * Math.sin(theta);
+// Make dropzone show highlight when dragging files over window
+['dragenter','dragover'].forEach(ev => {
+  window.addEventListener(ev, () => dropzone.style.borderColor = 'rgba(255,255,255,0.22)');
+});
+['dragleave','drop'].forEach(ev => {
+  window.addEventListener(ev, () => dropzone.style.borderColor = 'rgba(255,255,255,0.06)');
+});
 
-    camera.lookAt(x, y, z);
-
-    renderer.render(scene, camera);
-  }
-  </script>
+// Clean up object URLs when page unloads
+window.addEventListener('beforeunload', () => {
+  images.forEach(it => URL.revokeObjectURL(it.url));
+});
+</script>
 </body>
 </html>
