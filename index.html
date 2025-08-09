@@ -1,324 +1,452 @@
+<!--
+  ab3d-redesign.html
+  - Fixed module imports by using an import map (maps 'three' -> remote module URL).
+  - Keep the same UI and features as before.
+  - Run via local server: `python -m http.server` or deploy to Netlify/Vercel.
+-->
+
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Multi-image 360° Viewer</title>
-<style>
-  :root { --ui-bg: rgba(0,0,0,0.45); --ui-fg:#fff; --accent: #08f; }
-  html,body { height:100%; margin:0; background:#000; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue"; color:var(--ui-fg); }
-  #app { height:100vh; display:flex; flex-direction:column; }
-  #topbar {
-    display:flex; align-items:center; gap:10px; padding:10px;
-    background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.15));
-    z-index:3; position:relative;
-  }
-  #controls { display:flex; align-items:center; gap:10px; }
-  .btn {
-    background:var(--ui-bg); color:var(--ui-fg); border:1px solid rgba(255,255,255,0.06);
-    padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px;
-  }
-  #dropzone {
-    display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px;
-    border:1px dashed rgba(255,255,255,0.06); background:transparent; color:#ddd; cursor:pointer;
-  }
-  #viewer { flex:1; position:relative; overflow:hidden; }
-  canvas { display:block; width:100%; height:100%; }
-  #thumbs {
-    position: absolute; left:12px; bottom:12px; display:flex; gap:8px; z-index:4;
-    background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.05)); padding:8px; border-radius:10px;
-    max-width: calc(100% - 24px); overflow:auto;
-  }
-  .thumb {
-    width:86px; height:48px; object-fit:cover; border-radius:6px; border:2px solid transparent; cursor:pointer;
-  }
-  .thumb.selected { border-color:var(--accent); transform:scale(1.04); }
-  #info {
-    position:absolute; right:12px; top:12px; background:var(--ui-bg); padding:8px 10px; border-radius:8px; z-index:4;
-    font-size:13px;
-  }
-  input[type="file"] { display:none; }
-  #emptyHint { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); color:#999; z-index:2; text-align:center; }
-  .small { font-size:12px; color:#ccc; }
-  @media (max-width:700px){
-    .thumb{ width:72px; height:42px; }
-    #topbar { padding:8px; gap:6px; }
-  }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AB3D — 3D Visualization Studio</title>
+  <meta name="description" content="AB3D | Interactive 3D product visualization, configurators, and immersive renders">
+
+  <style>
+    /* ------- Theme variables ------- */
+    :root{
+      --brand:#004aad; /* AB3D blue */
+      --bg:#0f1724;
+      --card:#0b1220;
+      --muted:#98a0b3;
+      --glass: rgba(255,255,255,0.03);
+      --accent: #00b4ff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+
+    /* Basic page layout */
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg) 0%, #06111b 100%);color:#e6eef8}
+    .container{max-width:1200px;margin:0 auto;padding:40px}
+
+    header{display:flex;align-items:center;justify-content:space-between;gap:20px}
+    .logo{display:flex;align-items:center;gap:12px}
+    .logo-swatch{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--brand),#0060d6);display:grid;place-items:center;font-weight:700}
+    nav a{color:var(--muted);text-decoration:none;margin-left:18px}
+
+    /* Hero */
+    .hero{display:grid;grid-template-columns:1fr 520px;gap:40px;align-items:center;padding:40px 0}
+    .hero-left h1{font-size:2.6rem;margin:0 0 12px}
+    .tagline{color:var(--muted);margin-bottom:20px}
+    .cta{display:flex;gap:12px}
+    .btn{background:var(--brand);border:none;color:white;padding:12px 18px;border-radius:10px;cursor:pointer;font-weight:600;box-shadow:0 6px 20px rgba(0,74,173,0.18)}
+    .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+
+    /* Viewer card: contains the canvas */
+    .viewer-card{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 4px 30px rgba(2,6,23,0.7);min-height:420px;display:flex;flex-direction:column}
+    /* Make canvas fill the available viewer area */
+    #three-root{flex:1;min-height:380px;border-radius:8px;overflow:hidden;position:relative}
+    #three-canvas{width:100%;height:100%;display:block}
+
+    /* Services */
+    .services{padding:40px 0}
+    .services-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+    .service{background:var(--glass);border-radius:12px;padding:18px}
+
+    /* Portfolio */
+    .portfolio{padding:40px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);padding:12px;border-radius:12px;min-height:200px;display:flex;flex-direction:column}
+    .card .thumb{flex:1;background:#06131a;border-radius:8px;margin-bottom:10px;display:grid;place-items:center}
+
+    /* Founder */
+    .founder{display:flex;gap:18px;align-items:center;padding:20px;background:rgba(255,255,255,0.02);border-radius:12px}
+    .founder img{width:96px;height:96px;border-radius:12px;object-fit:cover}
+
+    /* Contact center */
+    .contact{display:grid;place-items:center;padding:40px 0}
+    .contact-card{background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));padding:28px;border-radius:14px;min-width:320px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.6)}
+
+    footer{padding:30px 0;color:var(--muted);text-align:center}
+
+    /* Responsive */
+    @media (max-width:980px){.hero{grid-template-columns:1fr;}.viewer-card{min-height:300px}}
+
+    /* subtle animations */
+    .fade-up{opacity:0;transform:translateY(12px);transition:all .7s cubic-bezier(.2,.9,.3,1)}
+    .fade-up.in{opacity:1;transform:none}
+  </style>
 </head>
 <body>
-<div id="app">
-  <div id="topbar">
-    <div id="controls">
-      <label id="dropzone" for="fileInput" title="Click to pick images or drag & drop them here">
-        + Import images
-      </label>
-      <input id="fileInput" type="file" accept="image/*" multiple>
-      <button id="prevBtn" class="btn" title="Previous image">◀</button>
-      <button id="nextBtn" class="btn" title="Next image">▶</button>
-      <button id="autorotateBtn" class="btn">Auto-rotate: On</button>
-      <label class="btn" style="display:inline-flex;align-items:center;gap:8px;">
-        <input id="invertChk" type="checkbox"> Invert
-      </label>
-      <button id="clearBtn" class="btn" title="Remove all uploaded images">Clear</button>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <div class="logo-swatch">AB</div>
+        <div>
+          <div style="font-weight:700">AB3D</div>
+          <small style="color:var(--muted)">Immersive 3D • Product Visuals • Configurators</small>
+        </div>
+      </div>
+      <nav>
+        <a href="#services">Services</a>
+        <a href="#portfolio">Portfolio</a>
+        <a href="#founder">Founder</a>
+        <a href="#contact">Contact</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-left">
+          <h1 class="fade-up">We build pixel-perfect <span style="color:var(--brand)">3D</span> product experiences</h1>
+          <p class="tagline fade-up">From interactive web viewers and configurators to photoreal product renders — we make your product shine online.</p>
+          <div class="cta fade-up">
+            <button class="btn" onclick="scrollToSection('contact')">Get in Touch</button>
+            <button class="btn secondary" onclick="scrollToSection('portfolio')">See Portfolio</button>
+          </div>
+
+          <div style="margin-top:18px;color:var(--muted)" class="fade-up">Kolkata • +91 86388 56674 • AB3D_Studio@outlook.com</div>
+        </div>
+
+        <aside class="viewer-card" aria-hidden="false">
+          <div id="three-root">
+            <!-- Canvas used by Three.js. Notice 'id' and no width/height attributes — we size it from JS. -->
+            <canvas id="three-canvas"></canvas>
+            <div style="position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.35);padding:6px 8px;border-radius:8px;font-size:13px;color:var(--muted)">Interactive viewer — drag to orbit • scroll to zoom</div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:space-between">
+            <select id="modelSelect" style="background:transparent;color:var(--muted);padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04)">
+              <option value="assets/Wrist-Watch.glb">Wrist Watch</option>
+              <option value="assets/product-2.glb">Product 2</option>
+            </select>
+            <div style="display:flex;gap:8px">
+              <button class="btn secondary" id="wireBtn">Wireframe</button>
+              <button class="btn" id="resetBtn">Reset</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="services" class="services fade-up">
+        <h2>Services</h2>
+        <div class="services-grid">
+          <div class="service"><h3>3D Product Visualization</h3><p class="tag">Photoreal renders for marketing and e‑commerce.</p></div>
+          <div class="service"><h3>Interactive Web Viewer</h3><p class="tag">Embed real-time 3D on websites with responsive controls.</p></div>
+          <div class="service"><h3>Configurator & Variants</h3><p class="tag">Material swaps, color options & live pricing.</p></div>
+          <div class="service"><h3>AR Export</h3><p class="tag">AR-ready assets for mobile & webAR experiences.</p></div>
+        </div>
+      </section>
+
+      <section id="portfolio" class="portfolio fade-up">
+        <h2>Portfolio</h2>
+        <div class="grid">
+          <div class="card">
+            <div class="thumb">3D Watch — interactive</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <small class="tag">Wrist Watch</small>
+              <div>
+                <button class="btn secondary" onclick="loadModel('assets/Wrist-Watch.glb')">View</button>
+                <button class="btn" onclick="openLightbox('assets/watch-render.jpg')">Open</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="thumb">Product Configurator</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <small class="tag">Product 2</small>
+              <div>
+                <button class="btn secondary" onclick="loadModel('assets/product-2.glb')">View</button>
+                <button class="btn" onclick="openLightbox('assets/product2-render.jpg')">Open</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="thumb">Before / After</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <small class="tag">CG vs Photo</small>
+              <div>
+                <button class="btn" onclick="openLightbox('assets/before-after.jpg')">Compare</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <section id="founder" class="founder fade-up" style="margin-top:30px">
+        <img src="assets/akshay.jpg" alt="Akshay Banerjee">
+        <div>
+          <div style="font-weight:700">Akshay Banerjee</div>
+          <div style="color:var(--muted)">Founder • 3D Artist & Visualization Lead</div>
+          <p style="margin-top:8px;color:var(--muted);max-width:520px">I build immersive product experiences that help brands sell and tell better — photoreal renders, interactive viewers and configurable product demos for web & AR.</p>
+        </div>
+      </section>
+
+      <section id="contact" class="contact fade-up">
+        <div class="contact-card">
+          <h2>Get in touch</h2>
+          <p>Ready to start a 3D project? Tell us about your product and timeline.</p>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <a class="btn" href="mailto:AB3D_Studio@outlook.com">Email</a>
+            <a class="btn secondary" href="tel:+918638856674">Call</a>
+            <a class="btn secondary" href="https://wa.me/918638856674" target="_blank">WhatsApp</a>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      © AB3D • Built with Three.js — Designed by Akshay Banerjee
+    </footer>
+  </div>
+
+  <!-- Modal / Lightbox -->
+  <div id="lightbox" style="position:fixed;inset:0;background:rgba(0,0,0,0.85);display:none;place-items:center;padding:30px;z-index:1200">
+    <div style="max-width:1200px;max-height:90vh;overflow:auto">
+      <img id="lightbox-img" src="" alt="preview" style="width:100%;height:auto;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,0.8)">
     </div>
-
-    <div style="margin-left:auto; font-size:13px;" class="small">Drag to look • Scroll to zoom • ←/→ keyboard</div>
   </div>
 
-  <div id="viewer">
-    <canvas id="canvas"></canvas>
-    <div id="emptyHint">No images loaded — import equirectangular JPG/PNG images (drag & drop or click “Import”).</div>
-    <div id="thumbs" aria-hidden="false"></div>
-    <div id="info" class="small">Images: <span id="count">0</span></div>
-  </div>
-</div>
-
-<!-- three.js -->
-<script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
-
-<script>
-/* Multi-image 360 viewer
-   - Drag/drop or pick files
-   - Shows thumbnails; click to activate
-   - Uses blob URLs; no upload to server
-*/
-
-const canvas = document.getElementById('canvas');
-const fileInput = document.getElementById('fileInput');
-const dropzone = document.getElementById('dropzone');
-const thumbs = document.getElementById('thumbs');
-const emptyHint = document.getElementById('emptyHint');
-const countEl = document.getElementById('count');
-const prevBtn = document.getElementById('prevBtn');
-const nextBtn = document.getElementById('nextBtn');
-const autorotateBtn = document.getElementById('autorotateBtn');
-const invertChk = document.getElementById('invertChk');
-const clearBtn = document.getElementById('clearBtn');
-
-let images = []; // {name, url, elThumb}
-let activeIndex = -1;
-let autoRotate = true;
-
-// --- three.js viewer setup ---
-let renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
-
-let scene = new THREE.Scene();
-let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 2000);
-camera.position.set(0,0,0.1);
-
-let sphere = null;
-const geometry = new THREE.SphereGeometry(500, 60, 40);
-
-// Interaction params
-let isUserInteracting = false;
-let onDownX = 0, onDownY = 0, onDownLon = 0, onDownLat = 0;
-let lon = 0, lat = 0, phi = 0, theta = 0;
-let targetLon = 0, targetLat = 0;
-
-function loadTextureFromURL(url, name){
-  const loader = new THREE.TextureLoader();
-  loader.setCrossOrigin('');
-  loader.load(url, texture => {
-    texture.minFilter = THREE.LinearFilter;
-    const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-    if(sphere) scene.remove(sphere);
-    sphere = new THREE.Mesh(geometry, material);
-    sphere.scale.x = invertChk.checked ? 1 : -1;
-    scene.add(sphere);
-    emptyHint.style.display = 'none';
-  }, undefined, err => {
-    console.error('Failed to load image', err, name);
-    alert('Failed to load "'+name+'". File may not be a supported image.');
-  });
-}
-
-// Hook resize
-window.addEventListener('resize', () => {
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-});
-
-// Pointer events (works for mouse & touch)
-document.addEventListener('pointerdown', (e) => {
-  isUserInteracting = true;
-  onDownX = e.clientX;
-  onDownY = e.clientY;
-  onDownLon = targetLon;
-  onDownLat = targetLat;
-});
-document.addEventListener('pointermove', (e) => {
-  if(isUserInteracting){
-    const deltaX = (e.clientX - onDownX);
-    const deltaY = (e.clientY - onDownY);
-    targetLon = onDownLon + deltaX * 0.1;
-    targetLat = onDownLat + deltaY * 0.1;
+  <!--
+    IMPORTANT: import map resolves bare specifiers like "three" and "three/examples/jsm/..."
+    Example modules (OrbitControls, GLTFLoader) often import from 'three' (bare specifier),
+    so mapping 'three' -> CDN module URL ensures the browser can resolve that dependency.
+    Place this importmap BEFORE the type="module" script that uses these specifiers.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.module.js",
+      "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.152.0/examples/jsm/"
+    }
   }
-});
-document.addEventListener('pointerup', () => { isUserInteracting = false; });
+  </script>
 
-// Wheel zoom
-document.addEventListener('wheel', e => {
-  e.preventDefault();
-  camera.fov += e.deltaY * 0.02;
-  camera.fov = Math.max(30, Math.min(100, camera.fov));
-  camera.updateProjectionMatrix();
-}, { passive:false });
+  <script type="module">
+    // Use the mapped specifiers. The import map above ensures 'three' resolves correctly.
+    // Note: modern browsers support import maps (Chrome, Edge, recent Firefox; if in doubt, use a Chromium-based browser).
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-// Keyboard for next/prev
-document.addEventListener('keydown', e => {
-  if(e.key === 'ArrowRight') activateIndex(activeIndex + 1);
-  if(e.key === 'ArrowLeft') activateIndex(activeIndex - 1);
-});
+    /* -------------------- Utility & UI helpers -------------------- */
+    function reveal(){
+      document.querySelectorAll('.fade-up').forEach(el=>{
+        const r = el.getBoundingClientRect();
+        if (r.top < window.innerHeight - 40) el.classList.add('in');
+      });
+    }
+    window.addEventListener('scroll', reveal);
+    window.addEventListener('load', reveal);
 
-// Animation loop
-function animate(){
-  requestAnimationFrame(animate);
-  if(autoRotate && !isUserInteracting) targetLon += 0.02;
-  lon += (targetLon - lon) * 0.07;
-  lat += (targetLat - lat) * 0.07;
-  lat = Math.max(-85, Math.min(85, lat));
-  phi = THREE.MathUtils.degToRad(90 - lat);
-  theta = THREE.MathUtils.degToRad(lon);
-  const x = 500 * Math.sin(phi) * Math.cos(theta);
-  const y = 500 * Math.cos(phi);
-  const z = 500 * Math.sin(phi) * Math.sin(theta);
-  camera.lookAt(x,y,z);
-  renderer.render(scene, camera);
-}
-animate();
+    function scrollToSection(id){
+      const el = document.getElementById(id);
+      if(el) el.scrollIntoView({behavior:'smooth'});
+    }
+    window.scrollToSection = scrollToSection;
 
-// --- UI / file handling ---
-function updateCount(){
-  countEl.textContent = images.length;
-  if(images.length === 0){
-    emptyHint.style.display = 'block';
-    if(sphere){ scene.remove(sphere); sphere = null; }
-    activeIndex = -1;
-  } else {
-    emptyHint.style.display = 'none';
-    if(activeIndex === -1) activateIndex(0);
-  }
-}
+    function openLightbox(src){
+      const lb = document.getElementById('lightbox');
+      const img = document.getElementById('lightbox-img');
+      img.src = src;
+      lb.style.display = 'grid';
+      lb.onclick = () => { lb.style.display = 'none'; img.src = ''; };
+    }
+    window.openLightbox = openLightbox;
 
-function createThumbnail(file, url, index){
-  const img = document.createElement('img');
-  img.src = url;
-  img.className = 'thumb';
-  img.title = file.name;
-  img.addEventListener('click', () => activateIndex(index));
-  // right-click to remove
-  img.addEventListener('contextmenu', (ev) => {
-    ev.preventDefault();
-    removeIndex(index);
-  });
-  return img;
-}
+    /* -------------------- Three.js scene setup -------------------- */
+    let scene, camera, renderer, controls, currentModel, mixer;
+    const canvas = document.getElementById('three-canvas');
+    const loader = new GLTFLoader();
+    const INITIAL_CAMERA = { x: 0, y: 0.9, z: 2.8 };
 
-function activateIndex(i){
-  if(images.length === 0) return;
-  if(i < 0) i = images.length - 1;
-  if(i >= images.length) i = 0;
-  activeIndex = i;
-  // set selected class
-  Array.from(thumbs.children).forEach((t, idx) => {
-    t.classList.toggle('selected', idx === i);
-  });
-  const imgInfo = images[i];
-  loadTextureFromURL(imgInfo.url, imgInfo.name);
-}
+    initThree();
 
-function removeIndex(i){
-  if(i < 0 || i >= images.length) return;
-  // revoke object URL
-  URL.revokeObjectURL(images[i].url);
-  images.splice(i,1);
-  // remove thumbnail node
-  thumbs.innerHTML = '';
-  images.forEach((it, idx) => {
-    const t = createThumbnail({name:it.name}, it.url, idx);
-    thumbs.appendChild(t);
-    it.elThumb = t;
-  });
-  // adjust activeIndex
-  if(images.length === 0) activeIndex = -1;
-  else if(i <= activeIndex) activeIndex = Math.max(0, activeIndex - 1);
-  updateCount();
-  if(activeIndex !== -1) activateIndex(activeIndex);
-}
+    function initThree(){
+      scene = new THREE.Scene();
 
-function clearAll(){
-  images.forEach(it => URL.revokeObjectURL(it.url));
-  images = [];
-  thumbs.innerHTML = '';
-  updateCount();
-}
+      // Camera: FOV and aspect will be set in onResize()
+      camera = new THREE.PerspectiveCamera(45, 520/420, 0.1, 1000);
+      camera.position.set(INITIAL_CAMERA.x, INITIAL_CAMERA.y, INITIAL_CAMERA.z);
 
-fileInput.addEventListener('change', e => {
-  handleFiles(Array.from(e.target.files));
-  fileInput.value = '';
-});
+      // Renderer: attach to our canvas; alpha:true allows page background to show through
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
-['dragenter','dragover','dragleave','drop'].forEach(evt => {
-  dropzone.addEventListener(evt, ev => { ev.preventDefault(); ev.stopPropagation(); });
-});
-dropzone.addEventListener('drop', ev => {
-  const dt = ev.dataTransfer;
-  if(!dt) return;
-  const items = Array.from(dt.files || []);
-  handleFiles(items);
-});
-dropzone.addEventListener('click', () => fileInput.click());
+      // Lights: hemisphere for soft fill, directional for specular highlights
+      const hemi = new THREE.HemisphereLight(0xffffff, 0x222222, 0.6);
+      scene.add(hemi);
+      const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+      dir.position.set(2,4,2);
+      scene.add(dir);
 
-function handleFiles(files){
-  // accept images only
-  const imgs = files.filter(f => f.type && f.type.startsWith('image/'));
-  if(imgs.length === 0) return;
-  const startIndex = images.length;
-  imgs.forEach((f, idx) => {
-    const url = URL.createObjectURL(f);
-    const item = { name: f.name, url: url };
-    images.push(item);
-  });
-  // create thumbs
-  thumbs.innerHTML = '';
-  images.forEach((it, idx) => {
-    const t = createThumbnail({name:it.name}, it.url, idx);
-    thumbs.appendChild(t);
-    it.elThumb = t;
-  });
-  updateCount();
-  // auto-activate first of newly added if nothing active yet
-  if(activeIndex === -1) activateIndex(startIndex);
-}
+      // Invisible ground for bounds calculations
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(40,40),
+        new THREE.MeshStandardMaterial({color:0x06131a, metalness:0, roughness:1})
+      );
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = -1.2;
+      ground.visible = false;
+      scene.add(ground);
 
-// Prev/Next / Auto-rotate / invert / clear
-prevBtn.addEventListener('click', () => activateIndex(activeIndex - 1));
-nextBtn.addEventListener('click', () => activateIndex(activeIndex + 1));
-autorotateBtn.addEventListener('click', () => {
-  autoRotate = !autoRotate;
-  autorotateBtn.textContent = 'Auto-rotate: ' + (autoRotate ? 'On' : 'Off');
-});
-invertChk.addEventListener('change', () => {
-  if(sphere) sphere.scale.x = invertChk.checked ? 1 : -1;
-});
-clearBtn.addEventListener('click', () => { clearAll(); });
+      // OrbitControls — imported from the examples module path, instantiated with camera + renderer DOM element
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.minDistance = 0.6;
+      controls.maxDistance = 8;
 
-// Make dropzone show highlight when dragging files over window
-['dragenter','dragover'].forEach(ev => {
-  window.addEventListener(ev, () => dropzone.style.borderColor = 'rgba(255,255,255,0.22)');
-});
-['dragleave','drop'].forEach(ev => {
-  window.addEventListener(ev, () => dropzone.style.borderColor = 'rgba(255,255,255,0.06)');
-});
+      // Start loop and handle resize
+      animate();
+      window.addEventListener('resize', onResize, { passive: true });
+      onResize();
+    }
 
-// Clean up object URLs when page unloads
-window.addEventListener('beforeunload', () => {
-  images.forEach(it => URL.revokeObjectURL(it.url));
-});
-</script>
+    function onResize(){
+      if(!renderer || !canvas || !camera) return;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width));
+      const height = Math.max(1, Math.floor(rect.height));
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    }
+
+    function disposeModel(model){
+      model.traverse(node=>{
+        if(node.geometry){ node.geometry.dispose(); }
+        if(node.material){
+          if(Array.isArray(node.material)) node.material.forEach(m=>{ if(m.map) m.map.dispose(); m.dispose(); });
+          else { if(node.material.map) node.material.map.dispose(); node.material.dispose(); }
+        }
+      });
+    }
+
+    function loadModel(path){
+      if(!loader) return console.warn('GLTFLoader not available');
+
+      loader.load(
+        path,
+        function(gltf){
+          // Remove previous model (dispose geometry & materials to free GPU memory)
+          if(currentModel){
+            scene.remove(currentModel);
+            disposeModel(currentModel);
+            currentModel = null;
+          }
+
+          currentModel = gltf.scene;
+          currentModel.scale.set(1,1,1);
+          scene.add(currentModel);
+
+          // Animations (if present)
+          if(gltf.animations && gltf.animations.length){
+            mixer = new THREE.AnimationMixer(currentModel);
+            gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+          } else {
+            mixer = null;
+          }
+
+          // Auto-frame the camera so the model fits the view
+          fitCameraToObject(camera, currentModel, 1.3, controls);
+        },
+        undefined,
+        function(err){
+          console.error('GLTF load error:', err);
+          alert('Failed to load model: ' + path + '\nCheck console for details.');
+        }
+      );
+    }
+
+    // UI wiring (prefer addEventListener instead of inline onclick for maintainability)
+    const modelSelect = document.getElementById('modelSelect');
+    if(modelSelect){
+      modelSelect.addEventListener('change', (e) => loadModel(e.target.value));
+    }
+
+    const wireBtn = document.getElementById('wireBtn');
+    if(wireBtn){
+      wireBtn.addEventListener('click', () => {
+        if(!currentModel) return;
+        currentModel.traverse(c => {
+          if(c.isMesh && c.material){
+            if(Array.isArray(c.material)) c.material.forEach(m => m.wireframe = !m.wireframe);
+            else c.material.wireframe = !c.material.wireframe;
+          }
+        });
+      });
+    }
+
+    const resetBtn = document.getElementById('resetBtn');
+    if(resetBtn){
+      resetBtn.addEventListener('click', () => {
+        if(controls && typeof controls.reset === 'function'){
+          controls.reset();
+        } else {
+          camera.position.set(INITIAL_CAMERA.x, INITIAL_CAMERA.y, INITIAL_CAMERA.z);
+          if(controls) controls.target.set(0,0,0);
+          if(controls) controls.update();
+        }
+        if(currentModel) currentModel.rotation.set(0,0,0);
+      });
+    }
+
+    // Auto-load initial model (short delay to allow scene initialization)
+    setTimeout(()=>{
+      const first = modelSelect && modelSelect.value ? modelSelect.value : 'assets/Wrist-Watch.glb';
+      loadModel(first);
+    }, 200);
+
+    function fitCameraToObject( camera, object, offset, controls ) {
+      offset = offset || 1.25;
+      const boundingBox = new THREE.Box3();
+      boundingBox.setFromObject( object );
+      const center = boundingBox.getCenter( new THREE.Vector3() );
+      const size = boundingBox.getSize( new THREE.Vector3() );
+      const maxDim = Math.max( size.x, size.y, size.z );
+
+      const fov = camera.fov * ( Math.PI / 180 );
+      let cameraZ = Math.abs( maxDim / 2 / Math.tan( fov / 2 ) ) * offset;
+
+      camera.position.set(center.x, center.y, center.z + cameraZ);
+
+      const minZ = boundingBox.min.z;
+      const cameraToFarEdge = ( minZ < 0 ) ? -minZ + cameraZ : cameraZ - minZ;
+      camera.far = cameraToFarEdge * 3;
+      camera.updateProjectionMatrix();
+
+      if(controls){
+        controls.target.copy(center);
+        controls.update();
+      }
+    }
+
+    function animate(){
+      requestAnimationFrame(animate);
+      if(mixer) mixer.update( (1/60) ); // simple fixed-step update for animations
+      if(controls) controls.update();
+      if(renderer && camera) renderer.render(scene, camera);
+    }
+
+    // Expose internals for debug in console: window._ab3d.scene / camera / controls
+    window._ab3d = { scene, camera, renderer, controls };
+
+    // Quick self-test: verify Three module loaded and print version to console
+    console.info("Three.js loaded:", (THREE && THREE.REVISION) ? ("r" + THREE.REVISION) : "unknown revision");
+  </script>
+
+  <!-- Note:
+       - If you still see "Failed to resolve module specifier 'three'", then either:
+         1) the browser doesn't support import maps (use a modern Chromium-based browser), OR
+         2) the file wasn't served over HTTP(s) (use a local server), OR
+         3) the import map was removed/modified — ensure the importmap above remains in this file.
+       - If you want a version that doesn't rely on import maps, I can provide a bundler-ready (rollup/webpack/vite) build or inline a compatible set of modules — tell me which environment you prefer.
+  -->
+
 </body>
 </html>
